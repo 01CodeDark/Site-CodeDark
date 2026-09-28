@@ -10,7 +10,9 @@
   },
   "private": true,
   "dependencies": {
-    "@replit/connectors-sdk": "^0.4.3"
+    "@replit/connectors-sdk": "^0.4.3",
+    "bcryptjs": "^3.0.2",
+    "@neondatabase/serverless": "^0.10.0"
   },
   "devDependencies": {
     "prettier": "^3.9.6",
