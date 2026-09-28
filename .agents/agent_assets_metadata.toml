@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "weJg_I9XSpfjatTmhcGkm"
+uri = "file://CodeDark-Store-final.zip"
+type = "unspecified"
+title = "CodeDark Store — código completo"
+description = "Pacote final do projeto CodeDark Store pronto para download."
+logical_id = "ec2d8d45-05e5-46c4-9bee-a42a74974f40"
+content_hash = "sha256:b13b8712e803ebd5a49f3a9d6cc64672a33c3a3ff7f6cde837845e29989ec47b"
+size = 2406208
+mtime_ms = 1790563084082
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/conversation:4865bb1a-9d50-4748-8118-dc290aa6e27a/ec2d8d45-05e5-46c4-9bee-a42a74974f40/396ff0b1-3a90-4e9d-8cdf-1800c178e57e"
+storage_version_token = "1790563087535791"
+content_type = "application/octet-stream"
