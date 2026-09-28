@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "CodeDark Store"
+description = "A dark software storefront for CodeDark with a curated catalog, product details, customer access, and an admin workspace for managing products, coupons, downloads, and support chat."
+version = "1.0.0"
+id = "artifacts/codedark-store"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19164
+
+[services.development]
+run = "pnpm --filter @workspace/codedark-store run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/codedark-store", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/codedark-store/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19164"
+BASE_PATH = "/"
