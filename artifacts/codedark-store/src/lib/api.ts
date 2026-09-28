@@ -23,6 +23,7 @@ async function api<T>(path: string, options: { method?: string; body?: unknown }
 export const get = <T>(path: string) => api<T>(path);
 export const post = <T>(path: string, body?: unknown) => api<T>(path, { method: 'POST', body });
 export const patch = <T>(path: string, body?: unknown) => api<T>(path, { method: 'PATCH', body });
+export const put = <T>(path: string, body?: unknown) => api<T>(path, { method: 'PUT', body });
 export const del = <T>(path: string) => api<T>(path, { method: 'DELETE' });
 
 // ---------- tipos do domínio ----------
@@ -58,7 +59,6 @@ export type Order = {
   id: string;
   status: 'pendente' | 'pago' | 'cancelado';
   amount_cents: number;
-  mp_payment_id: string | null;
   created_at: string;
   paid_at: string | null;
   product_id: string;
@@ -73,6 +73,8 @@ export type Order = {
   client_email?: string;
   message_count?: number;
 };
+
+export type PagamentoInfo = { pix_key: string; pix_holder: string; pix_note: string };
 
 export type Mensagem = {
   id: number;
@@ -102,4 +104,4 @@ export const ehEquipe = (u: Usuario | null) => Boolean(u && (u.role === 'adminis
 export const ehAdmin = (u: Usuario | null) => u?.role === 'administrador';
 
 export const rotuloPapel = (p: Papel) => (p === 'administrador' ? 'Administrador' : p === 'moderador' ? 'Moderador' : 'Cliente');
-export const rotuloStatus = (s: string) => (s === 'pago' ? 'Pago' : s === 'pendente' ? 'Aguardando pagamento' : s === 'cancelado' ? 'Cancelado' : s);
+export const rotuloStatus = (s: string) => (s === 'pago' ? 'Pago' : s === 'pendente' ? 'Aguardando PIX' : s === 'cancelado' ? 'Cancelado' : s);

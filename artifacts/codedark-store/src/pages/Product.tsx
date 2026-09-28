@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useRoute } from 'wouter';
+import { Link, useLocation, useRoute } from 'wouter';
 import { ArrowLeft, Check, Download, ExternalLink, Headphones, LockKeyhole, MessageSquare, Package, Zap } from 'lucide-react';
 import { AppShell, ArteProduto, Botao } from '@/components/store';
 import { get, moeda, post, type Order, type Product } from '@/lib/api';
@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth';
 
 export default function PaginaProduto() {
   const [match, params] = useRoute<{ id: string }>('/produto/:id');
+  const [, setLocation] = useLocation();
   const { usuario, carregando: carregandoAuth } = useAuth();
   const [produto, setProduto] = useState<Product | null>(null);
   const [erro, setErro] = useState('');
@@ -33,8 +34,8 @@ export default function PaginaProduto() {
     if (!produto) return;
     setComprando(true);
     try {
-      const r = await post<{ orderId: string; initPoint: string }>('/checkout', { productId: produto.id });
-      window.location.href = r.initPoint;
+      const r = await post<{ orderId: string }>('/checkout', { productId: produto.id });
+      setLocation(`/pedido?o=${r.orderId}`);
     } catch (e) {
       setErro((e as Error).message);
       setComprando(false);
@@ -71,7 +72,7 @@ export default function PaginaProduto() {
                 : <span className="text-sm text-[#7f8b9d]">O download será liberado em breve.</span>
             ) : carregandoAuth ? <div className="h-[46px] w-48 animate-pulse rounded-lg bg-white/[.05]" /> : usuario ? (
               <Botao onClick={comprar} disabled={comprando || Boolean(pedidoPendente)}>
-                {pedidoPendente ? 'Você já tem um pedido aberto' : comprando ? 'Redirecionando…' : 'Comprar no Mercado Pago'}
+                {pedidoPendente ? 'Você já tem um pedido aberto' : comprando ? 'Abrindo pedido…' : 'Comprar com PIX'}
               </Botao>
             ) : (
               <Link href={`/entrar?next=/produto/${produto.id}`} className="inline-flex items-center gap-2 rounded-lg bg-[#ff534d] px-5 py-3 text-sm font-bold text-white shadow-[0_12px_30px_rgba(255,83,77,.24)] hover:bg-[#ff6c64]"><LockKeyhole size={15} /> Entrar para comprar</Link>

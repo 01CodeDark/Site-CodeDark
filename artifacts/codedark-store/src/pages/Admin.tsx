@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Boxes, MessageSquare, Package, Pencil, Plus, ShieldCheck, Star, Tag, Trash2, Upload, Users, X } from 'lucide-react';
+import { BadgeCheck, Boxes, CheckCircle2, MessageSquare, Package, Pencil, Plus, QrCode, ShieldCheck, Star, Tag, Trash2, Upload, Users, X, XCircle } from 'lucide-react';
 import { AppShell, Botao, Campo, StatusChip, Vazio } from '@/components/store';
 import { ChatPainel } from '@/components/chat';
 import {
-  centavosParaReais, del, ehAdmin, get, moeda, patch, post, reaisParaCentavos, rotuloPapel,
-  type Categoria, type Order, type Product, type TeamOrder, type Usuario,
+  centavosParaReais, del, ehAdmin, get, moeda, patch, post, put, reaisParaCentavos, rotuloPapel,
+  type Categoria, type Order, type PagamentoInfo, type Product, type TeamOrder, type Usuario,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 
@@ -27,7 +27,7 @@ const formVazio: FormProduto = {
 
 export default function Admin() {
   const { usuario, carregando } = useAuth();
-  const [aba, setAba] = useState<'produtos' | 'categorias' | 'pedidos' | 'equipe'>('produtos');
+  const [aba, setAba] = useState<'produtos' | 'categorias' | 'pagamento' | 'pedidos' | 'equipe'>('produtos');
   const admin = ehAdmin(usuario);
 
   useEffect(() => {
@@ -58,6 +58,7 @@ export default function Admin() {
       <div className="mt-8">
         {aba === 'produtos' && admin && <AbaProdutos />}
         {aba === 'categorias' && admin && <AbaCategorias />}
+        {aba === 'pagamento' && admin && <AbaPagamento />}
         {aba === 'pedidos' && <AbaPedidos />}
         {aba === 'equipe' && admin && <AbaEquipe />}
       </div>
@@ -244,17 +245,30 @@ function AbaCategorias() {
 
 // =================== Pedidos & chat ===================
 function AbaPedidos() {
+  const { usuario } = useAuth();
+  const admin = ehAdmin(usuario);
   const [pedidos, setPedidos] = useState<TeamOrder[] | null>(null);
   const [chatAberto, setChatAberto] = useState<string | null>(null);
+  const [atualizando, setAtualizando] = useState('');
 
-  useEffect(() => { void get<TeamOrder[]>('/team/orders').then(setPedidos).catch(() => setPedidos([])); }, []);
+  const carregar = useCallback(async () => setPedidos(await get<TeamOrder[]>('/team/orders')), []);
+  useEffect(() => { void carregar().catch(() => setPedidos([])); }, [carregar]);
+
+  async function mudarStatus(id: string, acao: 'release' | 'cancel') {
+    setAtualizando(id);
+    try {
+      await post(`/team/orders/${id}/${acao}`, {});
+      await carregar();
+    } catch { /* o botão simplesmente não muda nada se falhar */ }
+    setAtualizando('');
+  }
 
   return <div className="grid gap-8 xl:grid-cols-[1fr_.9fr]">
     <div>
       {pedidos === null ? <div className="h-40 animate-pulse rounded-2xl bg-white/[.03]" /> : pedidos.length === 0
-        ? <Vazio icone={<MessageSquare size={26} />} titulo="Nenhum pedido ainda" texto="Quando um cliente comprar, o pedido aparece aqui com o chat de suporte." />
+        ? <Vazio icone={<MessageSquare size={26} />} titulo="Nenhum pedido ainda" texto="Quando um cliente comprar, o pedido aparece aqui. Você confere o PIX e libera o download com um clique." />
         : <div className="grid gap-3">{pedidos.map((o) => (
-          <div key={o.id} className="grid items-center gap-3 rounded-xl border border-white/[.08] bg-white/[.02] px-4 py-3 sm:grid-cols-[1fr_auto]">
+          <div key={o.id} className="grid items-center gap-3 rounded-xl border border-white/[.08] bg-white/[.02] px-4 py-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-display text-sm font-bold text-white">{o.product_name}</span>
@@ -262,13 +276,55 @@ function AbaPedidos() {
               </div>
               <p className="mt-0.5 truncate text-xs text-[#7f8b9d]">{o.client_name} · {o.client_email} · {moeda(o.amount_cents)} · {new Date(o.created_at).toLocaleDateString('pt-BR')}</p>
             </div>
-            <Botao variante={chatAberto === o.id ? 'primario' : 'contorno'} onClick={() => setChatAberto(o.id)} className="!py-2 !text-xs"><MessageSquare size={13} /> Chat ({o.message_count})</Botao>
+            <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+              {admin && o.status === 'pendente' && (<>
+                <Botao onClick={() => mudarStatus(o.id, 'release')} className="!py-2 !text-xs" disabled={atualizando === o.id}><BadgeCheck size={13} /> Liberar</Botao>
+                <Botao variante="contorno" onClick={() => mudarStatus(o.id, 'cancel')} className="!py-2 !text-xs" disabled={atualizando === o.id}><XCircle size={13} /> Cancelar</Botao>
+              </>)}
+              <Botao variante={chatAberto === o.id ? 'primario' : 'contorno'} onClick={() => setChatAberto(o.id)} className="!py-2 !text-xs"><MessageSquare size={13} /> Chat ({o.message_count})</Botao>
+            </div>
           </div>
         ))}</div>}
     </div>
     <div className="h-[560px]">{chatAberto ? <ChatPainel orderId={chatAberto} alturaFixa={false} /> : (
       <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-white/10 text-center text-sm text-[#5f6b7f]">Selecione um pedido para conversar com o cliente</div>
     )}</div>
+  </div>;
+}
+
+// =================== Pagamento (PIX) ===================
+function AbaPagamento() {
+  const [info, setInfo] = useState<PagamentoInfo | null>(null);
+  const [salvo, setSalvo] = useState(false);
+  const [erro, setErro] = useState('');
+
+  useEffect(() => { void get<PagamentoInfo>('/admin/settings').then(setInfo).catch(() => setInfo({ pix_key: '', pix_holder: '', pix_note: '' })); }, []);
+
+  async function salvar(e: React.FormEvent) {
+    e.preventDefault();
+    if (!info) return;
+    setErro(''); setSalvo(false);
+    try {
+      setInfo(await put<PagamentoInfo>('/admin/settings', info));
+      setSalvo(true);
+      setTimeout(() => setSalvo(false), 2500);
+    } catch (err) { setErro((err as Error).message); }
+  }
+
+  return <div className="max-w-xl">
+    <form onSubmit={salvar} className="flex flex-col gap-4 rounded-2xl border border-white/[.08] bg-white/[.02] p-6">
+      <h2 className="font-display text-lg font-bold text-white">Dados do PIX</h2>
+      <p className="text-xs leading-5 text-[#7f8b9d]">Quando um cliente compra, a página do pedido mostra esta chave e o valor. Você confere o PIX no seu banco e libera o download na aba Pedidos.</p>
+      <Campo label="Chave PIX (CPF, celular, email ou aleatória)" value={info?.pix_key || ''} onChange={(e) => setInfo({ ...info!, pix_key: e.target.value })} placeholder="ex: 123.456.789-00" required />
+      <Campo label="Nome de quem recebe (opcional)" value={info?.pix_holder || ''} onChange={(e) => setInfo({ ...info!, pix_holder: e.target.value })} placeholder="ex: Gabriel V." />
+      <label className="block"><span className="mb-1.5 block text-xs font-semibold uppercase tracking-[.12em] text-[#8b96a8]">Observação para o cliente (opcional)</span>
+        <textarea value={info?.pix_note || ''} onChange={(e) => setInfo({ ...info!, pix_note: e.target.value })} rows={2} className="w-full rounded-lg border border-white/10 bg-[#0a0e15] px-3.5 py-2.5 text-sm leading-6 text-[#e9edf2] outline-none focus:border-[#ff534d]/60" placeholder="ex: Banco Nubank · confira o comprovante antes de liberar" /></label>
+      {erro && <p className="rounded-lg border border-red-500/20 bg-red-500/10 px-3.5 py-2.5 text-xs text-red-300">{erro}</p>}
+      <div className="flex items-center gap-3">
+        <Botao type="submit"><CheckCircle2 size={15} /> Salvar</Botao>
+        {salvo && <span className="text-xs font-semibold text-emerald-400">Salvo ✓</span>}
+      </div>
+    </form>
   </div>;
 }
 

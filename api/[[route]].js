@@ -4,12 +4,11 @@ import crypto from 'node:crypto';
 
 // ============================================================
 // CodeDark Store — API serverless (Vercel)
-// Banco: Neon Postgres (DATABASE_URL) · Pagamentos: Mercado Pago
+// Banco: Neon Postgres (DATABASE_URL) · Pagamentos: PIX manual (liberação pelo dono)
 // ============================================================
 
 const COOKIE = 'cd_session';
 const SESSION_DAYS = 30;
-const MP_TOKEN = () => process.env.MERCADO_PAGO_ACCESS_TOKEN || '';
 let _sql = null;
 function db() {
   if (!_sql) {
@@ -67,9 +66,12 @@ const SCHEMA = [
     user_id uuid NOT NULL REFERENCES users(id),
     status text NOT NULL DEFAULT 'pendente',
     amount_cents integer NOT NULL,
-    mp_payment_id text,
     created_at timestamptz DEFAULT now(),
     paid_at timestamptz
+  )`,
+  `CREATE TABLE IF NOT EXISTS settings (
+    key text PRIMARY KEY,
+    value text NOT NULL DEFAULT ''
   )`,
   `CREATE TABLE IF NOT EXISTS messages (
     id bigserial PRIMARY KEY,
@@ -175,48 +177,27 @@ async function getProduct(id, publishedOnly) {
   return r ? { ...r, tags: r.tags || [] } : null;
 }
 
-// ---------- Mercado Pago ----------
-async function mpFetch(path, options) {
-  const resp = await fetch(`https://api.mercadopago.com${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${MP_TOKEN()}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  });
-  const data = await resp.json().catch(() => null);
-  return { ok: resp.ok, data };
+// ---------- PIX (pagamento manual) ----------
+async function getSetting(key) {
+  const rows = await db()`SELECT value FROM settings WHERE key = ${key} LIMIT 1`;
+  return rows[0]?.value || '';
+}
+async function setSetting(key, value) {
+  await db()`
+    INSERT INTO settings (key, value) VALUES (${key}, ${String(value || '')})
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
+}
+async function paymentInfo() {
+  const [pix_key, pix_holder, pix_note] = await Promise.all([
+    getSetting('pix_key'), getSetting('pix_holder'), getSetting('pix_note'),
+  ]);
+  return { pix_key, pix_holder, pix_note };
 }
 
-async function verifyAndSettleOrder(orderId, paymentId) {
-  if (!MP_TOKEN() || !paymentId) return null;
-  const { ok, data } = await mpFetch(`/v1/payments/${paymentId}`);
-  if (!ok || !data) return null;
-  const rows = await db()`SELECT id, status, amount_cents FROM orders WHERE id = ${orderId} LIMIT 1`;
-  const order = rows[0];
-  if (!order || order.status === 'pago') return order;
-  if (data.status === 'approved' && Number(data.transaction_amount) * 100 === order.amount_cents) {
-    await db()`
-      UPDATE orders SET status = 'pago', paid_at = now(), mp_payment_id = ${String(data.id)}
-      WHERE id = ${orderId}`;
-    await db()`
-      INSERT INTO messages (order_id, sender, author, text_body)
-      VALUES (${orderId}, 'suporte', 'CodeDark', 'Pagamento confirmado. Seu download está liberado abaixo e este chat é o canal direto com o suporte da loja.')`;
-    return { ...order, status: 'pago' };
-  }
-  if (data.status === 'cancelled' || data.status === 'rejected') {
-    await db()`UPDATE orders SET status = 'cancelado' WHERE id = ${orderId}`;
-    return { ...order, status: 'cancelado' };
-  }
-  return order;
-}
-
-async function createCheckout(req, user, productId) {
+async function createOrder(user, productId) {
   const product = await getProduct(productId, true);
   if (!product) return { error: 'Produto não encontrado.', status: 404 };
   if (!product.price_cents) return { error: 'Produto gratuito: o download é direto na página dele.', status: 400 };
-  if (!MP_TOKEN()) return { error: 'Pagamentos ainda não configurados (falta MERCADO_PAGO_ACCESS_TOKEN).', status: 503 };
 
   const existing = await db()`
     SELECT id FROM orders
@@ -228,38 +209,13 @@ async function createCheckout(req, user, productId) {
       VALUES (${product.id}, ${user.id}, 'pendente', ${product.price_cents})
       RETURNING id`
   )[0];
-
-  const base = baseUrl(req);
-  const { ok, data } = await mpFetch('/checkout/preferences', {
-    method: 'POST',
-    body: JSON.stringify({
-      items: [{
-        id: product.id,
-        title: product.name,
-        description: product.summary.slice(0, 250),
-        quantity: 1,
-        unit_price: product.price_cents / 100,
-        currency_id: 'BRL',
-      }],
-      payer: { name: user.name, email: user.email },
-      external_reference: order.id,
-      notification_url: `${base}/api/webhooks/mp`,
-      auto_return: 'approved',
-      back_urls: {
-        success: `${base}/pedido?o=${order.id}`,
-        failure: `${base}/pedido?o=${order.id}`,
-        pending: `${base}/pedido?o=${order.id}`,
-      },
-    }),
-  });
-  if (!ok || !data?.init_point) return { error: 'Não foi possível iniciar o checkout no Mercado Pago.', status: 502 };
-  return { orderId: order.id, initPoint: data.init_point };
+  return { orderId: order.id };
 }
 
 // ---------- pedidos / chat ----------
 async function orderWithProduct(orderId) {
   const rows = await db()`
-    SELECT o.id, o.status, o.amount_cents, o.mp_payment_id, o.created_at, o.paid_at,
+    SELECT o.id, o.status, o.amount_cents, o.created_at, o.paid_at,
            p.id AS product_id, p.name AS product_name, p.summary AS product_summary,
            p.delivery, p.download_url, p.art, p.photo, p.version, p.category_id
     FROM orders o JOIN products p ON p.id = o.product_id
@@ -347,13 +303,16 @@ export default async function handler(req, res) {
       if (!product) return bad(res, 'Produto não encontrado.', 404);
       return ok(res, product);
     }
+    if (parts[0] === 'payment-info' && method === 'GET') {
+      return ok(res, await paymentInfo());
+    }
 
     // ---------- minha conta / compras ----------
     const authErr = requireAuth(user);
     if (authErr) return bad(res, authErr.msg, authErr.status);
 
     if (parts[0] === 'checkout' && method === 'POST') {
-      const result = await createCheckout(req, user, body.productId);
+      const result = await createOrder(user, body.productId);
       if (result.error) return bad(res, result.error, result.status);
       return ok(res, result);
     }
@@ -378,16 +337,10 @@ export default async function handler(req, res) {
       if (!isOwner && teamErr) return bad(res, teamErr.msg, teamErr.status);
 
       if (parts[2] === undefined && method === 'GET') {
-        // se o MP redirecionou com payment_id, tenta confirmar
-        const paymentId = url.searchParams.get('payment_id') || url.searchParams.get('collection_id');
-        if (order.status === 'pendente' && paymentId) await verifyAndSettleOrder(orderId, paymentId);
         const fresh = await orderWithProduct(orderId);
+        const cliente = !isOwner || user.role === 'cliente';
+        if (cliente && fresh.status !== 'pago') delete fresh.download_url; // link só depois do PIX confirmado
         return ok(res, { ...fresh, messages: await getMessages(orderId) });
-      }
-      if (parts[2] === 'verify' && method === 'POST') {
-        const settled = await verifyAndSettleOrder(orderId, body.paymentId || order.mp_payment_id);
-        const fresh = await orderWithProduct(orderId);
-        return ok(res, fresh || settled);
       }
       if (parts[2] === 'messages' && method === 'GET') {
         return ok(res, await getMessages(orderId, Number(url.searchParams.get('after')) || 0));
@@ -407,6 +360,26 @@ export default async function handler(req, res) {
     const teamErr = requireTeam(user);
     if (teamErr) return bad(res, teamErr.msg, teamErr.status);
 
+    if (parts[0] === 'team' && parts[1] === 'orders' && parts[2] && parts.length === 4 && method === 'POST'
+        && (parts[3] === 'release' || parts[3] === 'cancel')) {
+      const adminOnly = requireAdmin(user);
+      if (adminOnly) return bad(res, adminOnly.msg, adminOnly.status);
+      const orderId = parts[2];
+      if (parts[3] === 'release') {
+        const rows = await db()`
+          UPDATE orders SET status = 'pago', paid_at = now()
+          WHERE id = ${orderId} AND status = 'pendente' RETURNING id`;
+        if (!rows.length) return bad(res, 'Pedido não encontrado ou já liberado.', 404);
+        await db()`
+          INSERT INTO messages (order_id, sender, author, text_body)
+          VALUES (${orderId}, 'suporte', 'CodeDark', 'Pagamento confirmado ✓ Seu download está liberado. Qualquer coisa, chama aqui.')`;
+        return ok(res, { ok: true, status: 'pago' });
+      }
+      const rows = await db()`
+        UPDATE orders SET status = 'cancelado' WHERE id = ${orderId} RETURNING id`;
+      if (!rows.length) return bad(res, 'Pedido não encontrado.', 404);
+      return ok(res, { ok: true, status: 'cancelado' });
+    }
     if (parts[0] === 'team' && parts[1] === 'orders' && method === 'GET') {
       const rows = await db()`
         SELECT o.id, o.status, o.amount_cents, o.created_at, o.paid_at,
@@ -423,6 +396,15 @@ export default async function handler(req, res) {
     const adminErr = requireAdmin(user);
     if (adminErr) return bad(res, adminErr.msg, adminErr.status);
 
+    if (parts[0] === 'admin' && parts[1] === 'settings') {
+      if (method === 'GET') return ok(res, await paymentInfo());
+      if (method === 'PUT' || method === 'PATCH') {
+        await setSetting('pix_key', String(body.pix_key || '').trim());
+        await setSetting('pix_holder', String(body.pix_holder || '').trim());
+        await setSetting('pix_note', String(body.pix_note || '').trim());
+        return ok(res, await paymentInfo());
+      }
+    }
     if (parts[0] === 'admin' && parts[1] === 'products') {
       if (method === 'GET') return ok(res, await listProducts(false));
       if (method === 'POST') {

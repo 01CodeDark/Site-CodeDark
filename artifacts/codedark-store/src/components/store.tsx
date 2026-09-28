@@ -40,7 +40,7 @@ export function StatusChip({ status }: { status: string }) {
     pendente: 'border-amber-500/25 bg-amber-500/10 text-amber-300',
     cancelado: 'border-red-500/25 bg-red-500/10 text-red-300',
   };
-  const rotulos: Record<string, string> = { pago: 'Pago', pendente: 'Aguardando pagamento', cancelado: 'Cancelado' };
+  const rotulos: Record<string, string> = { pago: 'Pago', pendente: 'Aguardando PIX', cancelado: 'Cancelado' };
   return <span className={`inline-flex rounded-full border px-3 py-1 text-[11px] font-bold ${mapa[status] || 'border-white/10 bg-white/[.04] text-[#97a2b4]'}`}>{rotulos[status] || status}</span>;
 }
 
