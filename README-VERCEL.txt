@@ -4,7 +4,7 @@ Deploy direto deste repositório (GitHub: 01CodeDark/Site-CodeDark).
 
 COMO FUNCIONA
 - Vercel detecta o framework Vite com o vercel.json na raiz (build e output já configurados).
-- A API fica em /api (função serverless api/[[route]].js) usando Neon Postgres.
+- A API fica em /api (função serverless api/[...route].js) usando Neon Postgres.
 - Pagamento: PIX manual. O cliente paga com sua chave e avisa no chat; você confere no banco e clica "Liberar" na aba Pedidos.
 
 VARIÁVEL DE AMBIENTE NECESSÁRIA (Settings > Environment Variables):
